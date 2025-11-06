@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from src.plugin_system.apis import component_manage_api
 from src.plugin_system.base.component_types import ComponentType
 from src.common.logger import get_logger
+from src.plugin_system.apis import generator_api, send_api
 
 logger = get_logger("Silence")
 
@@ -100,7 +101,7 @@ class SilenceCore:
             logger.error(f"自动清理过期状态时出错: {str(e)}")
     
     @classmethod
-    def add_silence(cls, stream_id: str, duration: Optional[float] = None, 
+    async def add_silence(cls, type, stream, stream_id: str, duration: Optional[float] = None, 
                    disabled_actions: Optional[List[str]] = None, 
                    disabled_commands: Optional[List[str]] = None) -> bool:
         """
@@ -110,6 +111,35 @@ class SilenceCore:
         if cls.is_silenced(stream_id):
             logger.warning(f"聊天流 {stream_id} 已经处于沉默状态")
             return False
+
+        success, reply_set, prompt = None, None, None
+
+        logger.info("add_silence 已触发")
+
+        if type: # Command Mute
+            success, reply_set, prompt = await generator_api.rewrite_reply(
+                chat_stream=stream,
+                raw_reply="好吧...",
+                reason="用户将你禁言，表现出失落难过，简短的一句话，必须回复内容",
+                return_prompt=True
+            )
+        else: # Action Mute
+            success, reply_set, prompt = await generator_api.rewrite_reply(
+                chat_stream=stream, 
+                raw_reply="我先不说话了",
+                reason="你打算自己禁言自己，简短的一句话，必须回复内容",
+                return_prompt=True
+            )
+
+        logger.debug(prompt)
+
+        if success and reply_set:
+            for reply_type, reply_content in reply_set:
+                if reply_type == "text":
+                    await send_api.text_to_stream(text=reply_content, stream_id=stream_id)
+                elif reply_type == "emoji":
+                    await send_api.emoji_to_stream(emoji_base64=reply_content, stream_id=stream_id)
+            
         
         # 计算过期时间
         expiration = time.time() + duration if duration else None
@@ -133,7 +163,7 @@ class SilenceCore:
         return True
     
     @classmethod
-    def remove_silence(cls, stream_id: str) -> bool:
+    async def remove_silence(cls, type, stream, stream_id: str) -> bool:
         """
         移除沉默状态
         返回: True=成功移除, False=不在沉默中
@@ -141,6 +171,34 @@ class SilenceCore:
         if not cls.is_silenced(stream_id):
             logger.warning(f"聊天流 {stream_id} 未处于沉默状态")
             return False
+        
+        success, reply_set = None, None, None
+
+        logger.info("remove_silence 已触发")
+        
+        if type: # Command Mute
+            success, reply_set, prompt = await generator_api.rewrite_reply(
+                chat_stream=stream,
+                raw_reply="又能说话了！",
+                reason="你的禁言时间到或被用户取消，表现出开心兴奋，简短的一句话，必须回复内容",
+                return_prompt=True
+            )
+        else: # Action Mute
+            success, reply_set, prompt = await generator_api.rewrite_reply(
+                chat_stream=stream,
+                raw_reply="我可以说话了",
+                reason="你自行禁言时间结束，简短的一句话，必须回复内容",
+                return_prompt=True
+            )
+            
+        logger.debug(prompt)
+
+        if success and reply_set:
+            for reply_type, reply_content in reply_set:
+                if reply_type == "text":
+                    await send_api.text_to_stream(text=reply_content, stream_id=stream_id)
+                elif reply_type == "emoji":
+                    await send_api.emoji_to_stream(emoji_base64=reply_content, stream_id=stream_id)
         
         # 获取数据用于恢复组件
         data = cls._load_data()

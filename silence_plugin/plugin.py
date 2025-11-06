@@ -16,8 +16,9 @@ import time
 import re
 import asyncio
 from src.common.logger import get_logger
-from .silence_core import SilenceCore
-from . import logger_patch
+from plugins.silence_plugin.silence_core import SilenceCore
+from plugins.silence_plugin import logger_patch
+from src.plugin_system.apis import generator_api
 
 logger = get_logger("Silence")
 
@@ -30,7 +31,7 @@ def apply_silence_patch_once():
         return
     
     # 保存原始方法
-    original_method = ChatConfig.get_current_talk_frequency
+    original_method = ChatConfig.talk_frequency
     
     # 创建补丁方法
     def patched_method(self, chat_stream_id: Optional[str] = None) -> float:
@@ -40,7 +41,7 @@ def apply_silence_patch_once():
         return original_method(self, chat_stream_id)
     
     # 应用补丁
-    ChatConfig.get_current_talk_frequency = patched_method
+    ChatConfig.talk_frequency = patched_method
     ChatConfig._silence_patch_applied = True
     # logger.info("沉默补丁已应用")
 
@@ -166,7 +167,7 @@ class SilenceAction(BaseAction):
     action_name = "silence_action"
     focus_activation_type = ActionActivationType.ALWAYS
     normal_activation_type = ActionActivationType.ALWAYS
-    activation_keywords = ["闭嘴"]
+    activation_keywords = ["闭嘴" ]
     keyword_case_sensitive = False
     mode_enable = ChatMode.ALL
     parallel_action = False
@@ -219,7 +220,8 @@ class SilenceAction(BaseAction):
         disabled_actions, disabled_commands = _get_components_to_disable()
         
         # 添加到沉默列表（Silence_Core会自动处理组件禁用）
-        if SilenceCore.add_silence(stream_id, duration, disabled_actions, disabled_commands):
+        silenceOn = await SilenceCore.add_silence(False, self.message.chat_stream, stream_id, duration, disabled_actions, disabled_commands)
+        if silenceOn:
             # 记录动作信息
             await self.store_action_info(
                 action_build_into_prompt=True,
@@ -235,7 +237,7 @@ class SilenceStopAction(BaseAction):
     action_name = "silence_stop_action"
     focus_activation_type = ActionActivationType.ALWAYS
     normal_activation_type = ActionActivationType.ALWAYS
-    activation_keywords = ["开口"]
+    activation_keywords = ["张嘴"]
     keyword_case_sensitive = False
     mode_enable = ChatMode.ALL
     parallel_action = False
@@ -276,7 +278,7 @@ class SilenceStopAction(BaseAction):
                 processed_text = msg.get("processed_plain_text", "")
                 if processed_text and mention_pattern.search(processed_text):
                     # 移除沉默（这会自动处理组件恢复）
-                    SilenceCore.remove_silence(stream_id)
+                    await SilenceCore.remove_silence(False, self.message.chat_stream, stream_id)
                     # 记录动作信息
                     await self.store_action_info(
                         action_build_into_prompt=True,
@@ -312,7 +314,16 @@ class SilenceCommand(BaseCommand):
         sender = self.message.message_info.user_info
 
         if not self._check_person_permission(sender.user_id):
-            await self.send_text("权限不足，你无权使用此命令")    
+            success, reply_set, prompt = await generator_api.rewrite_reply(
+                chat_stream=self.chat_stream,
+                raw_reply="你谁啊就随便禁言我？",
+                reason="用户试图禁言你，但没有权限没有成功，表示好奇，一句话，必须回复内容",
+                return_prompt=True
+            )
+            if success and reply_set:
+                for reply_type, reply_content in reply_set:
+                    if reply_type == "text":
+                        await self.send_text(reply_content)
             return False, "权限不足，无权使用此命令", True
         
         if not self.message.message_info.group_info:
@@ -332,14 +343,16 @@ class SilenceCommand(BaseCommand):
             disabled_actions, disabled_commands = _get_components_to_disable()
             
             duration_val = float(duration) if duration else None
-            if SilenceCore.add_silence(stream_id, duration_val, disabled_actions, disabled_commands):
+            silenceOn = await SilenceCore.add_silence(True, self.message.chat_stream, stream_id, duration_val, disabled_actions, disabled_commands)
+            if silenceOn:
                 return True, f"已添加聊天流 {stream_id} 到沉默列表", True
             else:
                 return True, f"聊天流 {stream_id} 添加到沉默列表失败", True
         
         elif action == "false":
             # 检查是否可以移除沉默（这会自动处理组件恢复）
-            if SilenceCore.remove_silence(stream_id):
+            silenceOff = await SilenceCore.remove_silence(True, self.message.chat_stream, stream_id)
+            if silenceOff:
                 return True, f"已从沉默列表移除聊天流 {stream_id}", True
             else:
                 return True, f"从沉默列表移除聊天流 {stream_id} 失败", True
