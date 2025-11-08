@@ -188,14 +188,18 @@ class SilenceUtils:
 
         # 先读一下配置
         config = cls._load_config()
+        mode = config.get("permissions", {}).get("white_or_black_list", "whitelist")
         admin_users = config.get("permissions", {}).get("admin_users", [])
         
         # 检查用户ID是否在管理员列表中
         if not admin_users:
             logger.info(f"未配置管理员用户列表")
             return False
-        return user_id in admin_users
-    
+        if mode == "whitelist":
+            return user_id in admin_users
+        else:
+            return user_id not in admin_users
+
     # 读取配置方法
     @classmethod
     def _load_config(cls) -> Dict[str, Any]:
@@ -212,6 +216,7 @@ class SilenceUtils:
             # 构建配置字典，使用get方法安全访问嵌套值
             config = {
                 "permissions": {
+                    "white_or_black_list": config_data.get("permissions", {}).get("white_or_black_list", "whitelist"),
                     "admin_users": config_data.get("permissions", {}).get("admin_users", [])
                 },
                 "adjustment": {

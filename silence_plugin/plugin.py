@@ -41,12 +41,15 @@ class SilencePlugin(BasePlugin):
     # 配置节描述
     config_section_descriptions = {
         "plugin": "插件基本配置",
+        "components": "插件组件开关配置",
+        "permissions": "权限配置(内部设置均可热重载)",
+        "adjustment": "沉默的个性化调整(内部设置均可热重载)"
     } 
 
     # 配置Schema定义
     config_schema = {
         "plugin": {
-            "config_version": ConfigField(type=str, default="1.4.6", description="插件配置文件版本号"),
+            "config_version": ConfigField(type=str, default="1.4.8", description="插件配置文件版本号"),
             "enabled": ConfigField(type=bool, default=True, description="是否启用插件（总开关）")
         },
         "components": {
@@ -55,6 +58,7 @@ class SilencePlugin(BasePlugin):
             "enable_silence_event_handler": ConfigField(type=bool, default=True, description="是否启用沉默事件处理器组件")
         },
         "permissions": {
+            "white_or_black_list": ConfigField(type=str, default="whitelist", description="管理用户列表的类型，支持'whitelist'（白名单）和'blacklist'（黑名单）两种模式"),
             "admin_users": ConfigField(type=list, default=[123456789,], description="能够使用沉默命令的用户QQ号列表")
         },
         "adjustment": {
@@ -72,7 +76,7 @@ class SilencePlugin(BasePlugin):
     manifest_data: Dict[str, Any] = {
         "manifest_version": 1,
         "name": "沉默插件",
-        "version": "1.4.6",
+        "version": "1.4.8",
         "description": "使麦麦在合适的时候保持沉默",
         "author": {
             "name": "A肆零西烛",
