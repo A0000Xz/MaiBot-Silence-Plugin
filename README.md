@@ -24,7 +24,7 @@
 
 插件也提供了权限控制，确保只有指定的人能够使用指令：
 
-<img width="1716" height="1305" alt="6975c2f1-d1ba-42bf-a7e8-383f0e35c836" src="https://github.com/user-attachments/assets/9bc70ef8-a7f3-4a31-89e4-f193c41a822a" />
+<img width="1548" height="1350" alt="b812bb25-9b18-429e-a501-ee32f661f40f" src="https://github.com/user-attachments/assets/c186e660-4037-4c45-80a6-8e4754dc41c1" />
 
 **须知：**
 
