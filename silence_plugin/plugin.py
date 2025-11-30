@@ -13,7 +13,6 @@ from src.plugin_system.base.base_events_handler import BaseEventHandler
 from src.plugin_system.base.config_types import ConfigField
 from src.plugin_system.base.component_types import ComponentInfo, EventType
 from .silence_utils import SilenceUtils
-from . import silence_patch
 from typing import Any, Dict, List, Tuple, Type, Optional
 import re
 
@@ -49,7 +48,7 @@ class SilencePlugin(BasePlugin):
     # 配置Schema定义
     config_schema = {
         "plugin": {
-            "config_version": ConfigField(type=str, default="1.4.8", description="插件配置文件版本号"),
+            "config_version": ConfigField(type=str, default="1.5.0", description="插件配置文件版本号"),
             "enabled": ConfigField(type=bool, default=True, description="是否启用插件（总开关）")
         },
         "components": {
@@ -65,40 +64,16 @@ class SilencePlugin(BasePlugin):
             "disable_command": ConfigField(type=bool, default=True, description="是否禁用其他命令组件"),
             "low_case": ConfigField(type=list, default=[120,600], description="低级别沉默时间范围，单位为秒，格式为[min,max]"),
             "medium_case": ConfigField(type=list, default=[600,1200], description="中级别沉默时间范围，单位为秒，格式为[min,max]"),
-            "serious_case": ConfigField(type=list, default=[1200,5400], description="高级别沉默时间范围，单位为秒，格式为[min,max]")
+            "serious_case": ConfigField(type=list, default=[1200,5400], description="高级别沉默时间范围，单位为秒，格式为[min,max]"),
+            "max_action_silence_time": ConfigField(type=int, default=10800, description="通过动作触发的最大沉默时间，单位为秒，超过该时间将被强制打回，避免被人滥用")
         }
     }
     
     # manifest文件名
     manifest_file_name: str = "manifest.json"  
 
-    # manifest数据
-    manifest_data: Dict[str, Any] = {
-        "manifest_version": 1,
-        "name": "沉默插件",
-        "version": "1.4.8",
-        "description": "使麦麦在合适的时候保持沉默",
-        "author": {
-            "name": "A肆零西烛",
-            "url": "https://github.com/A0000Xz"
-        },
-        "license": "GPL-v3.0-or-later",
-        "host_application": {
-            "min_version": "0.9.1",
-            "max_version": "0.11.1"
-        },
-        "keywords": ["Silence"],
-        "categories": ["Moderation"],
-        "repository_url": "https://github.com/A0000Xz/MaiBot-Silence-Plugin",
-        "default_locale": "zh-CN",
-        "locales_path": "locales"
-    } 
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        # 应用沉默补丁（确保只打一次）
-        silence_patch.apply_silence_patch_once()
 
     def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
         """返回插件包含的组件列表"""
@@ -131,7 +106,7 @@ class SilenceAction(BaseAction):
     action_description = "根据当前聊天的情况判断自己是否应该选择进入沉默状态" 
     action_parameters = {
     "case": "让你决定执行这个动作的情况，必填，只能填一个参数。如果你觉得自己应该收敛一点，适当保持沉默，填'low'；如果你感觉聊天气氛不对劲，自己说错了话，或者参与聊天的人明显对你说话有意见甚至生气，隐约表达了需要你安静的意愿，填'medium'；如果你是被别人直接明确且礼貌地要求了保持沉默一段时间，填'serious'",
-    "time": "沉默的时间长度，选填，必须填入以秒为单位的整数数字。如果是被人明确要求了保持沉默多久的话，把对方要求的时间长度换算成秒数填入即可；如果没有人对你明确要求沉默多久,请保持该参数为None"
+    "time": "沉默的时间长度，选填，必须填入以秒为单位的整数数字。如果被人明确要求了保持沉默多久的话，把对方要求的时间长度换算成秒数填入即可；如果没有人对你明确要求沉默多久,请一定要保持该参数为None，绝对不要填入数字！"
     }
     action_require = [
     "当你觉得自己话太多了，同时有人也隐约反映你说话太多时使用该动作",
@@ -287,8 +262,9 @@ class SilenceEventHandler(BaseEventHandler):
             # 走一下自定义的消息预加工流程
             userinfo = original_message.message_info.user_info
             chat = original_message.chat_stream
-            original_message.is_mentioned = False
-            original_message.is_at = False
+            original_message.is_mentioned = is_mentioned
+            original_message.is_at = is_at
+            original_message.is_no_read_command = True
             original_message.reply_probability_boost = reply_probability_boost
             mes_name = chat.group_info.group_name if chat.group_info else "私聊"
 

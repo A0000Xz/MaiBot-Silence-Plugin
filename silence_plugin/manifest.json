@@ -1,7 +1,7 @@
 {
 "manifest_version": 1,
 "name": "沉默插件",
-"version": "1.4.8",
+"version": "1.5.0",
 "description": "使麦麦在合适的时候保持沉默",
 "author": {
     "name": "A肆零西烛",
@@ -10,7 +10,7 @@
 "license": "GPL-v3.0-or-later",
 "host_application": {
     "min_version": "0.9.1",
-    "max_version": "0.11.1"
+    "max_version": "0.11.6"
 },
 "keywords": ["Silence"],
 "categories": ["Moderation"],
