@@ -1,5 +1,5 @@
 from src.plugin_system.core import component_registry
-from src.plugin_system.apis import component_manage_api, auto_talk_api
+from src.plugin_system.apis import component_manage_api
 from src.plugin_system.base.component_types import ComponentType
 from src.common.logger import get_logger
 from typing import Optional, Dict, Any, Tuple
@@ -15,6 +15,14 @@ class SilenceUtils:
 
     # 沉默状态记录
     _silence_records: Dict[str, Dict[str, Any]] = {} # 格式: {stream_id: {expiration: 过期时间戳 或 None, banned_command: 被禁用的指令(列表)}}, 如果过期时间戳是None表示永久沉默
+    
+    # 特定人群沉默状态记录
+    _silence_someone_records: Dict[int, Dict[str, Any]] = {} # 格式: {user_id: {expiration: 过期时间戳 或 None}}, 如果过期时间戳是None表示永久沉默
+
+    # 配置缓存
+    _config_cache: Optional[Dict[str, Any]] = None
+    _config_mtime: Optional[float] = None
+    _last_mtime_check: float = 0
 
     # 添加沉默状态方法
     @classmethod
@@ -29,6 +37,7 @@ class SilenceUtils:
         medium_min, medium_max = config["adjustment"]["medium_case"]
         serious_min, serious_max = config["adjustment"]["serious_case"]
         disable_command = config["adjustment"]["disable_command"]
+        max_action_silence_time = config["adjustment"]["max_action_silence_time"]
         
         if case == "low":
             duration = random.randint(low_min, low_max)  # 默认配置是2分钟到10分钟之间
@@ -37,6 +46,10 @@ class SilenceUtils:
         elif case == "serious":
             if duration is None:
                 duration = random.randint(serious_min, serious_max)  # 默认配置是20分钟到一个半小时之间
+            else:
+                # 拒绝不合理的沉默时间
+                if duration > max_action_silence_time:
+                    return False
         elif case == "command":
             pass  # 直接使用传入的duration
         else:
@@ -54,12 +67,8 @@ class SilenceUtils:
         if disable_command:
             banned_commands = cls._disable_commands(stream_id)
 
-        # 禁用主动发言
-        probability_multiplier = auto_talk_api.get_question_probability_multiplier(stream_id)
-        auto_talk_api.set_question_probability_multiplier(stream_id, 0.0)
-
         # 直接存储计算好的时间戳，被禁用的命令列表，和原始的主动发言概率乘数
-        cls._silence_records[stream_id] = {"expiration": expiration, "banned_command": banned_commands, "original_probability_multiplier": probability_multiplier}
+        cls._silence_records[stream_id] = {"expiration": expiration, "banned_command": banned_commands}
         duration_str = f"{duration}秒" if duration else "永久"
         logger.info(f"已添加聊天流 {stream_id} 到沉默列表，类型: {case}，持续时间: {duration_str}")
 
@@ -78,10 +87,6 @@ class SilenceUtils:
         
         # 恢复其他命令组件
         cls._enable_commands(stream_id)
-
-        # 恢复主动发言概率乘数
-        original_multiplier = cls._silence_records[stream_id].get("original_probability_multiplier", 0.0)
-        auto_talk_api.set_question_probability_multiplier(stream_id, original_multiplier)
         
         # 直接删沉默状态记录
         del cls._silence_records[stream_id]
@@ -116,6 +121,29 @@ class SilenceUtils:
         del cls._silence_records[stream_id]
         logger.info(f"聊天流 {stream_id} 的沉默状态已过期，自动清理")
         return False, ""
+    
+    # 沉默人群检查方法
+    @classmethod
+    def is_silenced_someone(cls, user_id: int) -> Tuple[bool, str]:
+        """沉默人群检查逻辑"""
+
+        # 先读一下配置
+        config = cls._load_config()
+        enable = config.get("experimental", {}).get("silence_someone_check", False)
+        silence_someones = config.get("experimental", {}).get("silence_someone_list", [])
+        
+        # 检查用户ID是否在沉默人群列表中
+        if not enable:
+            return False, ""
+        
+        if not silence_someones:
+            return False, ""
+            
+        if user_id in silence_someones:
+            return True, "user_silence"
+        
+        else:
+            return False, ""
 
     # 禁用command组件方法
     @classmethod
@@ -200,34 +228,54 @@ class SilenceUtils:
         else:
             return user_id not in admin_users
 
-    # 读取配置方法
     @classmethod
     def _load_config(cls) -> Dict[str, Any]:
-        """从同级目录的silence_config.toml文件直接加载配置"""
+        """从配置文件加载配置（带缓存）"""
+        current_time = time.time()
+        
+        # 有缓存且距离上次检查不到3秒，直接返回缓存
+        if cls._config_cache is not None and current_time - cls._last_mtime_check < 3.0:
+            return cls._config_cache
+        
+        cls._last_mtime_check = current_time
+        
         try:
-            # 获取当前文件所在目录
             script_dir = os.path.dirname(os.path.abspath(__file__))
             config_path = os.path.join(script_dir, "silence_config.toml")
+            current_mtime = os.path.getmtime(config_path)
             
-            # 读取并解析TOML配置文件
+            # 文件未修改且有缓存，返回缓存
+            if cls._config_mtime == current_mtime and cls._config_cache is not None:
+                return cls._config_cache
+            
+            # 文件已修改，重新加载
+            cls._config_mtime = current_mtime
+            
             with open(config_path, 'r', encoding='utf-8') as f:
                 config_data = toml.load(f)
             
-            # 构建配置字典，使用get方法安全访问嵌套值
-            config = {
+            cls._config_cache = {
                 "permissions": {
                     "white_or_black_list": config_data.get("permissions", {}).get("white_or_black_list", "whitelist"),
                     "admin_users": config_data.get("permissions", {}).get("admin_users", [])
                 },
                 "adjustment": {
                     "disable_command": config_data.get("adjustment", {}).get("disable_command", True),
-                    "low_case": config_data.get("adjustment", {}).get("low_case", [120,600]),
-                    "medium_case": config_data.get("adjustment", {}).get("medium_case", [600,1200]),
-                    "serious_case": config_data.get("adjustment", {}).get("serious_case", [1200,5400])
+                    "low_case": config_data.get("adjustment", {}).get("low_case", [120, 600]),
+                    "medium_case": config_data.get("adjustment", {}).get("medium_case", [600, 1200]),
+                    "serious_case": config_data.get("adjustment", {}).get("serious_case", [1200, 5400]),
+                    "max_action_silence_time": config_data.get("adjustment", {}).get("max_action_silence_time", 10800)
+                },
+                "experimental": {
+                    "silence_someone_check": config_data.get("experimental", {}).get("silence_someone_check", False),
+                    "silence_someone_list": config_data.get("experimental", {}).get("silence_someone_list", [])
                 }
             }
-            return config
-        
+            
+            return cls._config_cache
+            
         except Exception as e:
             logger.error(f"加载配置文件时出错: {str(e)}\n{traceback.format_exc()}")
+            if cls._config_cache is not None:
+                return cls._config_cache
             raise

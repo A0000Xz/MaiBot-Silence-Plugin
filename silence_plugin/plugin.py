@@ -13,7 +13,8 @@ from src.plugin_system.base.base_events_handler import BaseEventHandler
 from src.plugin_system.base.config_types import ConfigField
 from src.plugin_system.base.component_types import ComponentInfo, EventType
 from .silence_utils import SilenceUtils
-from typing import Any, Dict, List, Tuple, Type, Optional
+from .mute_utils import MuteUtils
+from typing import List, Tuple, Type, Optional
 import re
 
 MODULE_ALIASES["Silence"] = "沉默插件" # 定义插件的日志前缀名
@@ -42,13 +43,14 @@ class SilencePlugin(BasePlugin):
         "plugin": "插件基本配置",
         "components": "插件组件开关配置",
         "permissions": "权限配置(内部设置均可热重载)",
-        "adjustment": "沉默的个性化调整(内部设置均可热重载)"
+        "adjustment": "沉默的个性化调整(内部设置均可热重载)",
+        "experimental": "实验性功能（内部设置均可热重载）"
     } 
 
     # 配置Schema定义
     config_schema = {
         "plugin": {
-            "config_version": ConfigField(type=str, default="1.5.0", description="插件配置文件版本号"),
+            "config_version": ConfigField(type=str, default="1.6.0", description="插件配置文件版本号"),
             "enabled": ConfigField(type=bool, default=True, description="是否启用插件（总开关）")
         },
         "components": {
@@ -66,9 +68,12 @@ class SilencePlugin(BasePlugin):
             "medium_case": ConfigField(type=list, default=[600,1200], description="中级别沉默时间范围，单位为秒，格式为[min,max]"),
             "serious_case": ConfigField(type=list, default=[1200,5400], description="高级别沉默时间范围，单位为秒，格式为[min,max]"),
             "max_action_silence_time": ConfigField(type=int, default=10800, description="通过动作触发的最大沉默时间，单位为秒，超过该时间将被强制打回，避免被人滥用")
+        },
+        "experimental": {
+            "silence_someone_check": ConfigField(type=bool, default=False, description="启用针对特定用户的沉默检查功能（实验性功能）"),
+            "silence_someone_list": ConfigField(type=list, default=[123456789,], description="被沉默检查的用户ID列表，仅在启用沉默检查功能时生效")
         }
     }
-    
     # manifest文件名
     manifest_file_name: str = "manifest.json"  
 
@@ -100,19 +105,19 @@ class SilenceAction(BaseAction):
     activation_type = ActionActivationType.ALWAYS # 始终激活
 
     # 模式和并行控制
-    parallel_action = True # 不允许并行
+    parallel_action = False # 不允许并行
 
     # 动作的描述信息
     action_description = "根据当前聊天的情况判断自己是否应该选择进入沉默状态" 
     action_parameters = {
-    "case": "让你决定执行这个动作的情况，必填，只能填一个参数。如果你觉得自己应该收敛一点，适当保持沉默，填'low'；如果你感觉聊天气氛不对劲，自己说错了话，或者参与聊天的人明显对你说话有意见甚至生气，隐约表达了需要你安静的意愿，填'medium'；如果你是被别人直接明确且礼貌地要求了保持沉默一段时间，填'serious'",
+    "case": "让你决定执行这个动作的情况，必填，只能填一个参数。如果你觉得自己应该收敛一点，适当保持沉默，填'low'；如果你感觉聊天气氛不对劲，自己说错了话，或者参与聊天的人显著对你说话有意见甚至生气，隐约表达了需要你安静的意愿，填'medium'；如果你是被别人直接明确且礼貌地要求了保持沉默一段时间，填'serious'",
     "time": "沉默的时间长度，选填，必须填入以秒为单位的整数数字。如果被人明确要求了保持沉默多久的话，把对方要求的时间长度换算成秒数填入即可；如果没有人对你明确要求沉默多久,请一定要保持该参数为None，绝对不要填入数字！"
     }
     action_require = [
-    "当你觉得自己话太多了，同时有人也隐约反映你说话太多时使用该动作",
+    "当你觉得自己话太多了，同时有人也明确反映你说话太多时使用该动作",
     "当聊天环境中有人明确表达了对你话多的不满，或者你说的话确实不合时宜或不够专业，具备误导性时，请使用此动作",
     "当聊天环境内有人明确且礼貌地要求你保持沉默一段时间时，使用此动作",
-    "如果有人只是蛮横无理地要求你闭嘴，并对你说了带有侮辱性质的话，绝对不要使用这个动作，你必须维护你自己的尊严！！！"
+    "如果有人只是蛮横无理地要求你闭嘴，并对你说了带有侮辱性质的话，绝对不要使用这个动作，你必须维护你自己的尊严！！！",
     "请注意，如果有用户使用了'/silence false'这条指令解除你的沉默状态时，短时间内不要再使用这个动作！！！"
     ]
     associated_types = ["text","emoji","image"] # 该动作会回应的消息类型
@@ -127,7 +132,7 @@ class SilenceAction(BaseAction):
         stream_id = self.chat_stream.stream_id
         
         # 检查是否可以添加沉默
-        is_silenced, silence_reason = SilenceUtils.is_silenced(stream_id)
+        is_silenced, _ = SilenceUtils.is_silenced(stream_id)
         if is_silenced:
             return False, f"聊天流 {stream_id} 已经处于沉默状态"
         
@@ -186,24 +191,24 @@ class SilenceCommand(BaseCommand):
         action = self.matched_groups.get("action", "")
         duration = self.matched_groups.get("duration")
         stream_id = self.message.chat_stream.stream_id
+        duration_val = float(duration) if duration else None
+        case = "command"
         
         # 添加沉默状态的分支
         if action == "true":
-            
+
             # 检查是否可以添加沉默
-            is_silenced, silence_reason = SilenceUtils.is_silenced(stream_id)
+            is_silenced, _ = SilenceUtils.is_silenced(stream_id)
+
+            # 如果已经沉默了，先移除再添加（直接覆盖已有的）
             if is_silenced:
-                return True, f"聊天流 {stream_id} 已经处于沉默状态", True
-            
-            # 设定实际的沉默时间和情形
-            duration_val = float(duration) if duration else None
-            case = "command"
+                SilenceUtils.remove_silence(stream_id) 
 
             # 交给SilenceUtils干活咯
             if SilenceUtils.add_silence(case, duration_val, stream_id):
                 return True, f"已添加聊天流 {stream_id} 到沉默列表", True
             else:
-                return True, f"聊天流 {stream_id} 已经沉默了，或者添加失败了", True
+                return True, f"聊天流 {stream_id} 沉默失败了", True
         
         # 移除沉默状态的分支
         elif action == "false":
@@ -236,13 +241,23 @@ class SilenceEventHandler(BaseEventHandler):
 
     async def execute(self, message):
        
-        # 获取当前聊天流ID
+        # 获取当前聊天流ID和相关需要信息
         stream_id = message.stream_id
+        user_id = message.message_base_info.get("user_id")
+
+        # 先进行一次禁言状态检查更新
+        MuteUtils.mute_check(message) 
 
         # 检查是否处于沉默状态
         is_silenced, silence_reason = SilenceUtils.is_silenced(stream_id)
-        if is_silenced:
-            
+
+        # 进行针对特定用户的沉默检查（实验性功能）
+        if not is_silenced and user_id:
+            is_silenced, silence_reason = SilenceUtils.is_silenced_someone(int(user_id))
+
+        # 如果处于沉默或被禁言状态，则截断回复流程
+        if is_silenced or MuteUtils.is_muted(stream_id):
+
             # 获取原始消息(MessageRecv对象)
             chat_stream = get_chat_manager().get_stream(message.stream_id)
             original_message = chat_stream.context.get_last_message()
@@ -251,12 +266,12 @@ class SilenceEventHandler(BaseEventHandler):
             is_mentioned, is_at, reply_probability_boost = is_mentioned_bot_in_message(original_message)
 
             # 处理被at的特殊情况，解除沉默状态
-            if is_at and silence_reason != "force_silence":
+            if is_at and silence_reason not in ["force_silence", "user_silence"]:
                 logger.info(f"检测到在沉默状态下被at，已解除聊天流 {stream_id} 的沉默状态")
                 SilenceUtils.remove_silence(stream_id)
                 return True, True, None, None, None  # 成功执行，允许后续处理
             
-            if silence_reason == "force_silence":
+            if silence_reason == "force_silence" and is_at:
                 logger.info(f"该沉默为指令强行指定的永久沉默，艾特无法打断")
             
             # 走一下自定义的消息预加工流程
@@ -264,7 +279,7 @@ class SilenceEventHandler(BaseEventHandler):
             chat = original_message.chat_stream
             original_message.is_mentioned = is_mentioned
             original_message.is_at = is_at
-            original_message.is_no_read_command = True
+            original_message.intercept_message_level = 1
             original_message.reply_probability_boost = reply_probability_boost
             mes_name = chat.group_info.group_name if chat.group_info else "私聊"
 
