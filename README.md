@@ -22,7 +22,13 @@
 
 本插件提供了很多配置选项，推荐使用WebUI进行配置！
 
+<img width="2142" height="984" alt="e9c5a46e91fd31ad746ebe0c5ff1e6c0" src="https://github.com/user-attachments/assets/ee41ef8b-d663-4d75-8d64-ac0a607ee553" />
 
+<img width="2141" height="820" alt="be981d8dfc6ad6a9d5dc18e960170ebf" src="https://github.com/user-attachments/assets/7c1b9d92-faa3-4e1a-9eed-9f4d01f34a08" />
+
+<img width="2118" height="1013" alt="b6dd59b3b46fb8340f3d15ea8404d2e2" src="https://github.com/user-attachments/assets/33d81955-d89f-476b-8267-4659e7eae53e" />
+
+<img width="2125" height="725" alt="5575a3a92548a2286ddcae696be18f0c" src="https://github.com/user-attachments/assets/b0e160a7-6469-488d-8c5e-d8153e411a01" />
 
 本插件也提供了一些指令以方便强制性操作，目前有的指令如下：
 
