@@ -271,7 +271,7 @@ class SilenceUtils:
         
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            config_path = os.path.join(script_dir, "silence_config.toml")
+            config_path = os.path.join(script_dir, "config.toml")
             current_mtime = os.path.getmtime(config_path)
             
             # 文件未修改且有缓存，返回缓存
