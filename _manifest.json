@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "name": "沉默插件",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "使麦麦在需要的时候保持沉默（窥屏），支持一些个性化配置选项",
   "author": {
     "name": "A肆零西烛",
@@ -21,5 +21,5 @@
   "repository_url": "https://github.com/A0000Xz/MaiBot-Silence-Plugin",
   "default_locale": "zh-CN",
   "locales_path": "locales",
-  "id": "A肆零西烛.MaiBot-Silence-Plugin"
+  "id": "A0000Xz.MaiBot-Silence-Plugin"
 }
