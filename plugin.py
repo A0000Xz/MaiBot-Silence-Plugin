@@ -55,7 +55,7 @@ class SilencePlugin(BasePlugin):
     "plugin": {
         "config_version": ConfigField(
             type=str,
-            default="1.6.5",
+            default="1.6.6",
             description="插件配置文件版本号",
             disabled=True
         ),
@@ -91,9 +91,9 @@ class SilencePlugin(BasePlugin):
         ),
         "admin_users": ConfigField(
             type=list,
-            item_type="number",
             default=[123456789],
             description="能够使用沉默命令的管理员用户QQ号列表",
+            item_type="number",
         )
     },
     "adjustment": {
@@ -101,6 +101,12 @@ class SilencePlugin(BasePlugin):
             type=bool,
             default=True,
             description="是否在沉默期间禁用其他命令组件"
+        ),
+        "unaffected_command_list": ConfigField(
+            type=list,
+            default=["xxxxxx_command"],
+            description="当禁用命令组件功能启用时，不受影响的命令（已内置沉默插件本体命令）。应填入其他插件中命令组件被定义的名称（默认填入名称仅示例，并不实际存在）。",
+            item_type="string",
         ),
         "low_case": ConfigField(
             type=list,
@@ -344,7 +350,8 @@ class SilenceCommandEventHandler(BaseEventHandler):
     intercept_message = True
 
     async def execute(self, message):
-        if SilenceUtils.is_disable_commands():
+        is_command, available_commands = SilenceUtils.is_disable_commands()
+        if is_command:
             platform = message.message_base_info.get("platform")
             user_id = message.message_base_info.get("user_id")
             group_id = message.message_base_info.get("group_id")
@@ -361,8 +368,8 @@ class SilenceCommandEventHandler(BaseEventHandler):
                         _, _, command_info = command_result
                         command_name = command_info.name
 
-                        # 沉默指令放行
-                        if command_name == "silence_command":
+                        # 被豁免的指令直接放行
+                        if command_name in available_commands:
                             return True, True, None, None, None
 
                         # 检查是否处于沉默状态

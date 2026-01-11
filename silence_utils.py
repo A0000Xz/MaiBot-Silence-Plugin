@@ -155,10 +155,10 @@ class SilenceUtils:
 
     # 禁用command组件方法
     @classmethod
-    def is_disable_commands(cls) -> bool:
+    def is_disable_commands(cls) -> Tuple[bool, list]:
         """检查是否禁用指令组件"""
         config = cls._load_config()
-        return config["adjustment"]["disable_command"]
+        return config["adjustment"]["disable_command"], ["silence_command"] + config["adjustment"]["unaffected_command_list"]
     
     # 权限检查方法
     @classmethod
@@ -230,6 +230,7 @@ class SilenceUtils:
                 },
                 "adjustment": {
                     "disable_command": config_data.get("adjustment", {}).get("disable_command", True),
+                    "unaffected_command_list": config_data.get("adjustment", {}).get("unaffected_command_list", []),
                     "low_case": config_data.get("adjustment", {}).get("low_case", [120, 600]),
                     "medium_case": config_data.get("adjustment", {}).get("medium_case", [600, 1200]),
                     "serious_case": config_data.get("adjustment", {}).get("serious_case", [1200, 5400]),

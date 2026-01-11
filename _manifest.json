@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "name": "沉默插件",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "description": "使麦麦在需要的时候保持沉默（窥屏），支持一些个性化配置选项",
   "author": {
     "name": "A肆零西烛",
