@@ -1,12 +1,10 @@
-from src.plugin_system.core import component_registry
-from src.plugin_system.apis import component_manage_api
-from src.plugin_system.base.component_types import ComponentType
 from src.common.logger import get_logger
 from typing import Optional, Dict, Any, Tuple
+import hashlib
 import os
+import random
 import toml
 import traceback
-import random
 import time
 
 logger = get_logger("Silence")
@@ -14,10 +12,7 @@ logger = get_logger("Silence")
 class SilenceUtils:
 
     # 沉默状态记录
-    _silence_records: Dict[str, Dict[str, Any]] = {} # 格式: {stream_id: {expiration: 过期时间戳 或 None, banned_command: 被禁用的指令(列表)}}, 如果过期时间戳是None表示永久沉默
-    
-    # 特定人群沉默状态记录
-    _silence_someone_records: Dict[int, Dict[str, Any]] = {} # 格式: {user_id: {expiration: 过期时间戳 或 None}}, 如果过期时间戳是None表示永久沉默
+    _silence_records: Dict[str, Dict[str, Any]] = {} # 格式: {stream_id: {expiration: 过期时间戳 或 None}}, 如果过期时间戳是None表示永久沉默
 
     # 配置缓存
     _config_cache: Optional[Dict[str, Any]] = None
@@ -36,7 +31,6 @@ class SilenceUtils:
         low_min, low_max = config["adjustment"]["low_case"]
         medium_min, medium_max = config["adjustment"]["medium_case"]
         serious_min, serious_max = config["adjustment"]["serious_case"]
-        disable_command = config["adjustment"]["disable_command"]
         max_action_silence_time = config["adjustment"]["max_action_silence_time"]
         
         if case == "low":
@@ -62,13 +56,8 @@ class SilenceUtils:
         else:
             expiration = time.time() + duration
 
-        # 根据配置决定是否禁用其他命令组件
-        banned_commands = []
-        if disable_command:
-            banned_commands = cls._disable_commands(stream_id)
-
-        # 直接存储计算好的时间戳，被禁用的命令列表，和原始的主动发言概率乘数
-        cls._silence_records[stream_id] = {"expiration": expiration, "banned_command": banned_commands}
+        # 直接存储计算好的时间戳
+        cls._silence_records[stream_id] = {"expiration": expiration}
         duration_str = f"{duration}秒" if duration else "永久"
         logger.info(f"已添加聊天流 {stream_id} 到沉默列表，类型: {case}，持续时间: {duration_str}")
 
@@ -84,9 +73,6 @@ class SilenceUtils:
         if stream_id not in cls._silence_records:
             logger.warning(f"聊天流 {stream_id} 未处于沉默状态")
             return False
-        
-        # 恢复其他命令组件
-        cls._enable_commands(stream_id)
         
         # 直接删沉默状态记录
         del cls._silence_records[stream_id]
@@ -116,8 +102,7 @@ class SilenceUtils:
         if expiration >= current_time:
             return True, ""  # 没到时间就还在沉默中
         
-        # 已过期，直接删除记录并恢复命令组件
-        cls._enable_commands(stream_id)
+        # 已过期，直接删除记录
         del cls._silence_records[stream_id]
         logger.info(f"聊天流 {stream_id} 的沉默状态已过期，自动清理")
         return False, ""
@@ -170,67 +155,10 @@ class SilenceUtils:
 
     # 禁用command组件方法
     @classmethod
-    def _disable_commands(cls, stream_id: str) -> list:
-        """禁用所有Command组件（除了SilenceCommand）"""
-        try:
-            banned_commands = []
-            # 获取所有已注册的Command
-            all_commands = component_registry.get_enabled_components_by_type(ComponentType.COMMAND)
-            
-            # 简单计数
-            disabled_count = 0
-
-            for command_name in all_commands:
-                
-                # 跳过SilenceCommand（保留解除沉默的指令）
-                if command_name == "silence_command":
-                    continue
-                
-                # 记录被禁用的命令列表
-                banned_commands.append(command_name)
-
-                # 禁用其他所有Command
-                component_manage_api.locally_disable_component(
-                    command_name, 
-                    ComponentType.COMMAND, 
-                    stream_id
-                )
-                disabled_count += 1
-            
-            logger.info(f"已为聊天流 {stream_id} 禁用 {disabled_count} 个Command组件")
-
-            # 返回被禁用的命令列表
-            return banned_commands
-        
-        except Exception as e:
-            logger.error(f"禁用Command组件时出错: {str(e)}\n{traceback.format_exc()}")
-            return []
-
-    # 恢复command组件方法
-    @classmethod
-    def _enable_commands(cls, stream_id: str):
-        """恢复所有Command组件"""
-        try:
-            # 获取指定聊天流在沉默期间被禁用的命令列表
-            banned_commands = cls._silence_records.get(stream_id, {}).get("banned_command", [])
-
-            # 一个简单小计数
-            enabled_count = 0
-
-            for command_name in banned_commands:
-
-                # 恢复所有Command
-                component_manage_api.locally_enable_component(
-                    command_name, 
-                    ComponentType.COMMAND, 
-                    stream_id
-                )
-                enabled_count += 1
-            
-            logger.info(f"已为聊天流 {stream_id} 恢复 {enabled_count} 个Command组件")
-
-        except Exception as e:
-            logger.error(f"恢复Command组件时出错: {str(e)}\n{traceback.format_exc()}")
+    def is_disable_commands(cls) -> bool:
+        """检查是否禁用指令组件"""
+        config = cls._load_config()
+        return config["adjustment"]["disable_command"]
     
     # 权限检查方法
     @classmethod
@@ -257,6 +185,17 @@ class SilenceUtils:
         """检查是否启用沉默状态下表达学习"""
         config = cls._load_config()
         return config.get("experimental", {}).get("silence_expression_learning", False)
+    
+    @staticmethod
+    def generate_stream_id(platform: str, user_id: str, group_id: Optional[str]) -> str:
+        """生成聊天流唯一ID（与ChatStream保持一致）"""
+        if group_id:
+            components = [platform, str(group_id)]
+        else:
+            components = [platform, str(user_id), "private"]
+        
+        key = "_".join(components)
+        return hashlib.md5(key.encode()).hexdigest()
 
     @classmethod
     def _load_config(cls) -> Dict[str, Any]:

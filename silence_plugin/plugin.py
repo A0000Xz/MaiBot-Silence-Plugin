@@ -14,6 +14,7 @@ from src.plugin_system.base.base_events_handler import BaseEventHandler
 from src.plugin_system.base.config_types import ConfigField
 from src.plugin_system.base.component_types import ComponentInfo, EventType
 from src.plugin_system.base.config_types import ConfigLayout, ConfigTab
+from src.plugin_system.core import component_registry
 from .silence_utils import SilenceUtils
 from .mute_utils import MuteUtils
 from typing import List, Tuple, Type, Optional
@@ -54,7 +55,7 @@ class SilencePlugin(BasePlugin):
     "plugin": {
         "config_version": ConfigField(
             type=str,
-            default="1.6.3",
+            default="1.6.4",
             description="插件配置文件版本号",
             disabled=True
         ),
@@ -191,6 +192,7 @@ class SilencePlugin(BasePlugin):
             components.append((SilenceCommand.get_command_info(), SilenceCommand))
         if self.get_config("components.enable_silence_event_handler", True):
             components.append((SilenceEventHandler.get_handler_info(), SilenceEventHandler))
+            components.append((SilenceCommandEventHandler.get_handler_info(), SilenceCommandEventHandler))
         return components
     
 class SilenceAction(BaseAction):
@@ -321,6 +323,68 @@ class SilenceCommand(BaseCommand):
             else:
                 return True, f"聊天流 {stream_id}并不处于沉默状态中，或者移除失败了 ", True
             
+class SilenceCommandEventHandler(BaseEventHandler):
+    """
+    沉默期间命令事件处理器
+    -监听ON_MESSAGE_PRE_PROCESS事件，确保截断命令执行
+    """
+    # 事件类型
+    event_type = EventType.ON_MESSAGE_PRE_PROCESS
+    
+    # 处理器名称
+    handler_name = "silence_command_event_handler"
+    
+    # 处理器描述
+    handler_description = "沉默事件处理器"
+    
+    # 处理器权重
+    weight = 999
+    
+    # 是否阻塞消息（消息的处理流程到底等不等这个处理器忙活完）
+    intercept_message = True
+
+    async def execute(self, message):
+        if SilenceUtils.is_disable_commands():
+            platform = message.message_base_info.get("platform")
+            user_id = message.message_base_info.get("user_id")
+            group_id = message.message_base_info.get("group_id")
+            stream_id = SilenceUtils.generate_stream_id(platform,user_id,group_id)
+
+            # 经过验证，指令应当只能是单文本，故检查seg数量
+            if len(message.message_segments) == 1:
+                seg = message.message_segments[0]
+
+                # 检查是不是指令，是的话走下一步
+                if seg.type == "text":
+                    command_result = component_registry.find_command_by_text(seg.data)
+                    if command_result:
+                        _, _, command_info = command_result
+                        command_name = command_info.name
+
+                        # 沉默指令放行
+                        if command_name == "silence_command":
+                            return True, True, None, None, None
+
+                        # 检查是否处于沉默状态
+                        is_silenced, _ = SilenceUtils.is_silenced(stream_id)
+
+                        # 进行针对特定群聊的沉默检查（实验性功能）
+                        if not is_silenced and group_id:
+                            is_silenced, _ = SilenceUtils.is_silenced_group(int(group_id))
+
+                            # 直接添加到沉默列表
+                            if is_silenced:
+                                SilenceUtils.add_silence("command", None, stream_id)
+
+                        # 进行针对特定用户的沉默检查（实验性功能）
+                        if not is_silenced and user_id:
+                            is_silenced, _ = SilenceUtils.is_silenced_someone(int(user_id))
+
+                        if is_silenced:
+                            return True, False, None, None, None  # 成功执行，阻止后续处理，且不返回任何消息
+                    
+        return True, True, None, None, None  # 成功执行，允许后续处理
+            
 class SilenceEventHandler(BaseEventHandler):
     """
     沉默事件处理器
@@ -357,6 +421,10 @@ class SilenceEventHandler(BaseEventHandler):
         # 进行针对特定群聊的沉默检查（实验性功能）
         if not is_silenced and group_id:
             is_silenced, silence_reason = SilenceUtils.is_silenced_group(int(group_id))
+
+            # 直接添加到沉默列表
+            if is_silenced:
+                SilenceUtils.add_silence("command", None, stream_id)
 
         # 进行针对特定用户的沉默检查（实验性功能）
         if not is_silenced and user_id:
