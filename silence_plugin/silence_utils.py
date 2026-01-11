@@ -129,7 +129,7 @@ class SilenceUtils:
 
         # 先读一下配置
         config = cls._load_config()
-        enable = config.get("experimental", {}).get("silence_someone_check", False)
+        enable = config.get("experimental", {}).get("silence_special_check", False)
         silence_someones = config.get("experimental", {}).get("silence_someone_list", [])
         
         # 检查用户ID是否在沉默人群列表中
@@ -140,7 +140,30 @@ class SilenceUtils:
             return False, ""
             
         if user_id in silence_someones:
-            return True, "user_silence"
+            return True, "special_silence"
+        
+        else:
+            return False, ""
+        
+    # 沉默群聊检查方法
+    @classmethod
+    def is_silenced_group(cls, group_id: int) -> Tuple[bool, str]:
+        """沉默群聊检查逻辑"""
+
+        # 先读一下配置
+        config = cls._load_config()
+        enable = config.get("experimental", {}).get("silence_special_check", False)
+        silence_groups = config.get("experimental", {}).get("silence_group_list", [])
+        
+        # 检查群聊ID是否在沉默群聊列表中
+        if not enable:
+            return False, ""
+        
+        if not silence_groups:
+            return False, ""
+            
+        if group_id in silence_groups:
+            return True, "special_silence"
         
         else:
             return False, ""
@@ -227,6 +250,13 @@ class SilenceUtils:
             return user_id in admin_users
         else:
             return user_id not in admin_users
+        
+    # 检查是否启用沉默状态下表达学习
+    @classmethod
+    def check_expression_learning(cls) -> bool:
+        """检查是否启用沉默状态下表达学习"""
+        config = cls._load_config()
+        return config.get("experimental", {}).get("silence_expression_learning", False)
 
     @classmethod
     def _load_config(cls) -> Dict[str, Any]:
@@ -267,8 +297,10 @@ class SilenceUtils:
                     "max_action_silence_time": config_data.get("adjustment", {}).get("max_action_silence_time", 10800)
                 },
                 "experimental": {
-                    "silence_someone_check": config_data.get("experimental", {}).get("silence_someone_check", False),
-                    "silence_someone_list": config_data.get("experimental", {}).get("silence_someone_list", [])
+                    "silence_expression_learning": config_data.get("experimental", {}).get("silence_expression_learning", False),
+                    "silence_special_check": config_data.get("experimental", {}).get("silence_special_check", False),
+                    "silence_someone_list": config_data.get("experimental", {}).get("silence_someone_list", []),
+                    "silence_group_list": config_data.get("experimental", {}).get("silence_group_list", [])
                 }
             }
             

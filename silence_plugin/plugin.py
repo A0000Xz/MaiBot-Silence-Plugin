@@ -1,4 +1,5 @@
 from src.person_info.person_info import Person
+from src.bw_learner.message_recorder import extract_and_distribute_messages
 from src.common.database.database_model import Images
 from src.common.logger import MODULE_ALIASES, MODULE_COLORS, get_logger
 from src.chat.message_receive.chat_stream import get_chat_manager
@@ -12,9 +13,11 @@ from src.plugin_system.base.base_command import BaseCommand
 from src.plugin_system.base.base_events_handler import BaseEventHandler
 from src.plugin_system.base.config_types import ConfigField
 from src.plugin_system.base.component_types import ComponentInfo, EventType
+from src.plugin_system.base.config_types import ConfigLayout, ConfigTab
 from .silence_utils import SilenceUtils
 from .mute_utils import MuteUtils
 from typing import List, Tuple, Type, Optional
+import asyncio
 import re
 
 MODULE_ALIASES["Silence"] = "沉默插件" # 定义插件的日志前缀名
@@ -36,7 +39,7 @@ class SilencePlugin(BasePlugin):
     enable_plugin = True # 是否启用插件
     dependencies = []  # 依赖的其他插件列表
     python_dependencies = []  # 依赖的Python包列表
-    config_file_name = "silence_config.toml"  # 配置文件名称
+    config_file_name = "config.toml"  # 配置文件名称
 
     # 配置节描述
     config_section_descriptions = {
@@ -47,35 +50,134 @@ class SilencePlugin(BasePlugin):
         "experimental": "实验性功能（内部设置均可热重载）"
     } 
 
-    # 配置Schema定义
     config_schema = {
-        "plugin": {
-            "config_version": ConfigField(type=str, default="1.6.0", description="插件配置文件版本号"),
-            "enabled": ConfigField(type=bool, default=True, description="是否启用插件（总开关）")
-        },
-        "components": {
-            "enable_silence_action": ConfigField(type=bool, default=True, description="是否启用沉默动作组件"),
-            "enable_silence_command": ConfigField(type=bool, default=True, description="是否启用沉默命令组件"),
-            "enable_silence_event_handler": ConfigField(type=bool, default=True, description="是否启用沉默事件处理器组件")
-        },
-        "permissions": {
-            "white_or_black_list": ConfigField(type=str, default="whitelist", description="管理用户列表的类型，支持'whitelist'（白名单）和'blacklist'（黑名单）两种模式"),
-            "admin_users": ConfigField(type=list, default=[123456789,], description="能够使用沉默命令的用户QQ号列表")
-        },
-        "adjustment": {
-            "disable_command": ConfigField(type=bool, default=True, description="是否禁用其他命令组件"),
-            "low_case": ConfigField(type=list, default=[120,600], description="低级别沉默时间范围，单位为秒，格式为[min,max]"),
-            "medium_case": ConfigField(type=list, default=[600,1200], description="中级别沉默时间范围，单位为秒，格式为[min,max]"),
-            "serious_case": ConfigField(type=list, default=[1200,5400], description="高级别沉默时间范围，单位为秒，格式为[min,max]"),
-            "max_action_silence_time": ConfigField(type=int, default=10800, description="通过动作触发的最大沉默时间，单位为秒，超过该时间将被强制打回，避免被人滥用")
-        },
-        "experimental": {
-            "silence_someone_check": ConfigField(type=bool, default=False, description="启用针对特定用户的沉默检查功能（实验性功能）"),
-            "silence_someone_list": ConfigField(type=list, default=[123456789,], description="被沉默检查的用户ID列表，仅在启用沉默检查功能时生效")
-        }
+    "plugin": {
+        "config_version": ConfigField(
+            type=str,
+            default="1.6.3",
+            description="插件配置文件版本号",
+            disabled=True
+        ),
+        "enabled": ConfigField(
+            type=bool,
+            default=True,
+            description="是否启用插件（总开关）"
+        )
+    },
+    "components": {
+        "enable_silence_action": ConfigField(
+            type=bool,
+            default=True,
+            description="是否启用沉默动作组件"
+        ),
+        "enable_silence_command": ConfigField(
+            type=bool,
+            default=True,
+            description="是否启用沉默命令组件"
+        ),
+        "enable_silence_event_handler": ConfigField(
+            type=bool,
+            default=True,
+            description="是否启用沉默事件处理器组件"
+        )
+    },
+    "permissions": {
+        "white_or_black_list": ConfigField(
+            type=str,
+            default="whitelist",
+            description="管理用户列表的类型，支持'whitelist'（白名单）和'blacklist'（黑名单）两种模式",
+            choices=["whitelist", "blacklist"]
+        ),
+        "admin_users": ConfigField(
+            type=list,
+            item_type="number",
+            default=[123456789],
+            description="能够使用沉默命令的用户QQ号列表",
+        )
+    },
+    "adjustment": {
+        "disable_command": ConfigField(
+            type=bool,
+            default=True,
+            description="是否禁用其他命令组件"
+        ),
+        "low_case": ConfigField(
+            type=list,
+            default=[120, 600],
+            description="低级别沉默时间范围，单位为秒",
+            item_type="number",
+            min_items=2,
+            max_items=2
+        ),
+        "medium_case": ConfigField(
+            type=list,
+            default=[600, 1200],
+            description="中级别沉默时间范围，单位为秒",
+            item_type="number",
+            min_items=2,
+            max_items=2
+        ),
+        "serious_case": ConfigField(
+            type=list,
+            default=[1200, 5400],
+            description="高级别沉默时间范围，单位为秒",
+            item_type="number",
+            min_items=2,
+            max_items=2
+        ),
+        "max_action_silence_time": ConfigField(
+            type=int,
+            default=10800,
+            description="通过动作触发的最大沉默时间，单位为秒，超过该时间将被强制打回，避免被人滥用"
+        )
+    },
+    "experimental": {
+        "silence_expression_learning": ConfigField(
+            type=bool,
+            default=False,
+            description="是否在沉默状态下继续进行表情学习"
+        ),
+        "silence_special_check": ConfigField(
+            type=bool,
+            default=False,
+            description="启用针对特定用户或群聊的沉默检查功能（实验性功能）"
+        ),
+        "silence_someone_list": ConfigField(
+            type=list,
+            default=[123456789],
+            description="被沉默检查的用户ID列表，仅在启用特定沉默检查功能时生效",
+            item_type="number",
+        ),
+        "silence_group_list": ConfigField(
+            type=list,
+            default=[123456789],
+            description="被沉默检查的群聊ID列表，仅在启用特定沉默检查功能时生效",
+            item_type="number",
+        )
     }
+}
+
+
+    config_layout = ConfigLayout(
+    type="tabs",
+    tabs=[
+        ConfigTab(
+            id="basic",
+            title="基础设置",
+            sections=["plugin", "components", "permissions", "adjustment"],
+            icon="settings"
+        ),
+        ConfigTab(
+            id="experimental",
+            title="实验功能",
+            sections=["experimental"],
+            icon="flask"
+        )
+    ]
+)
+
     # manifest文件名
-    manifest_file_name: str = "manifest.json"  
+    manifest_file_name: str = "_manifest.json"  
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -244,12 +346,17 @@ class SilenceEventHandler(BaseEventHandler):
         # 获取当前聊天流ID和相关需要信息
         stream_id = message.stream_id
         user_id = message.message_base_info.get("user_id")
+        group_id = message.message_base_info.get("group_id")
 
         # 先进行一次禁言状态检查更新
         MuteUtils.mute_check(message) 
 
         # 检查是否处于沉默状态
         is_silenced, silence_reason = SilenceUtils.is_silenced(stream_id)
+
+        # 进行针对特定群聊的沉默检查（实验性功能）
+        if not is_silenced and group_id:
+            is_silenced, silence_reason = SilenceUtils.is_silenced_group(int(group_id))
 
         # 进行针对特定用户的沉默检查（实验性功能）
         if not is_silenced and user_id:
@@ -266,7 +373,7 @@ class SilenceEventHandler(BaseEventHandler):
             is_mentioned, is_at, reply_probability_boost = is_mentioned_bot_in_message(original_message)
 
             # 处理被at的特殊情况，解除沉默状态
-            if is_at and silence_reason not in ["force_silence", "user_silence"]:
+            if is_at and silence_reason not in ["force_silence", "special_silence"]:
                 logger.info(f"检测到在沉默状态下被at，已解除聊天流 {stream_id} 的沉默状态")
                 SilenceUtils.remove_silence(stream_id)
                 return True, True, None, None, None  # 成功执行，允许后续处理
@@ -317,6 +424,10 @@ class SilenceEventHandler(BaseEventHandler):
                 user_id=original_message.message_info.user_info.user_id,  # type: ignore
                 nickname=userinfo.user_nickname,  # type: ignore
             )
+
+            # 在配置启用的情况下，沉默状态下也进行表达学习（实验性功能）
+            if SilenceUtils.check_expression_learning():
+                asyncio.create_task(extract_and_distribute_messages(stream_id))
 
             return True, False, None, None, None  # 成功执行，阻止后续处理，且不返回任何消息
         else:
